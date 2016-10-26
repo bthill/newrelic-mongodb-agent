@@ -198,13 +198,13 @@ module NewRelic::MongodbAgent
     end
 
     def report_lock_metric(metric_name, units, stats, path)
-      current_value = path.split(/\|/).inject(stats) { |v, p| v[p] }
+      current_value = path.split(/\|/).inject(stats) { |v, p| v.nil? ? nil : v[p] }
       if current_value.nil?
         current_value = 0
       end
 
       if @prior
-        prior_value = path.split(/\|/).inject(@prior) { |v, p| v[p] }
+        prior_value = path.split(/\|/).inject(@prior) { |v, p| v.nil? ? nil : v[p] }
         if prior_value.nil?
           prior_value = 0
         end
