@@ -15,6 +15,7 @@ module NewRelic::MongodbAgent
     agent_version '2.5.0-naspersclassifieds'
 
     def setup_metrics
+      self.endpoint ||= 'localhost'
       self.port ||= 27017
       self.agent_name ||= "#{endpoint}:#{port}/#{database}"
     end
