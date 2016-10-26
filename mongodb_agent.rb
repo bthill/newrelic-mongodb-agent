@@ -1,100 +1,146 @@
 #!/usr/bin/env ruby
-require "rubygems"
-require "bundler/setup"
-require "newrelic_plugin"
-require "mongo"
+require 'rubygems'
+require 'bundler/setup'
+require 'newrelic_plugin'
+require 'mongo'
 
 include Mongo
 
 module NewRelic::MongodbAgent
 
   class Agent < NewRelic::Plugin::Agent::Base
-    agent_guid "com.mongohq.mongo-agent"
-    agent_config_options :endpoint, :username, :password, :database, :port, :agent_name, :ssl
-    agent_human_labels("MongoDB") { "#{agent_name}" }
-    agent_version '2.4.4-3'
+    agent_guid 'com.naspersclassifieds.mongo-agent'
+    agent_config_options :endpoint, :username, :password, :port, :agent_name, :ssl
+    agent_human_labels('MongoDB') { "#{agent_name}" }
+    agent_version '2.5.0-naspersclassifieds'
 
     def setup_metrics
-      self.port ||= 27017 
+      self.port ||= 27017
       self.agent_name ||= "#{endpoint}:#{port}/#{database}"
     end
 
     def poll_cycle
       stats = mongodb_server_stats()
-      db_stats = mongodb_db_stats()
 
-      #Network metrics
-      report_counter_metric("Network/Bytes Out", "bytes/sec", stats["network"]["bytesOut"])
-      report_counter_metric("Network/Bytes In", "bytes/sec", stats['network']['bytesIn'])
-      report_counter_metric("Network/Requests", "requests/sec", stats['network']['numRequests'])
+      # Network metrics
+      report_counter_metric('Network/Bytes In', 'bytes/sec', stats['network']['bytesIn'])
+      report_counter_metric('Network/Bytes Out', 'bytes/sec', stats['network']['bytesOut'])
+      report_counter_metric('Network/Requests', 'requests/sec', stats['network']['numRequests'])
 
       # Ops counters
-      report_counter_metric("Opcounters/Insert", "inserts",    stats['opcounters']['insert'])      
-      report_counter_metric("Opcounters/Query", "queries",     stats['opcounters']['query'])      
-      report_counter_metric("Opcounters/Update", "updates",    stats['opcounters']['update'])
-      report_counter_metric("Opcounters/Delete", "deletes",    stats['opcounters']['delete'])
-      report_counter_metric("Opcounters/GetMore", "getmores",  stats['opcounters']['getmore'])
-      report_counter_metric("Opcounters/Command", "commands",  stats['opcounters']['command'])  
+      report_section('Opcounters', stats['opcounters'])
 
-      # Faults and assertions 
-      report_counter_metric("Extra/Page Faults", "pagefaults/sec",  stats['extra_info']['page_faults'])
-      report_counter_metric("Asserts/Regular",           "regular",         stats['asserts']['regular'])
-      report_counter_metric("Asserts/Warning",           "warning",         stats['asserts']['warning'])
-      report_counter_metric("Asserts/Msg",               "msg",             stats['asserts']['msg'])
-      report_counter_metric("Asserts/User",              "user",            stats['asserts']['user'])
+      # Ops counters replication
+      report_section('Opcounters Replication', stats['opcountersRepl'])
 
-      # Connection metrics
-      report_metric("Connections/Current",                "current",         stats['connections']['current'])
-      report_metric("Connections/Available",              "available",       stats['connections']['available'])
-      report_counter_metric("Connections/Total Created",  "connections/sec", stats['connections']['totalCreated'])
+      # Faults and assertions
+      report_counter_metric('Extra/Page Faults', 'pagefaults/sec', stats['extra_info']['page_faults'])
+      report_section('Asserts', stats['asserts'])
+
+      # Connections
+      report_metric('Connections/Current', 'current', stats['connections']['current'])
+      report_metric('Connections/Available', 'available', stats['connections']['available'])
+      report_counter_metric('Connections/Total Created', 'connections/sec', stats['connections']['totalCreated'])
 
       # Cursor metrics
-      report_metric("Cursors/Total Open",        "open",            stats['cursors']['totalOpen'])
-      report_metric("Cursors/Client Cursors",    "size",            stats['cursors']['clientCursors_size'])
-      report_metric("Cursors/Timed Out",         "timedout",        stats['cursors']['timedOut'])
+      report_metric('Cursors/Open Total', 'open', stats['metrics']['cursor']['open']['total'])
+      report_metric('Cursors/Open No Timeout', 'open', stats['metrics']['cursor']['open']['noTimeout'])
+      report_metric('Cursors/Open Pinned', 'open', stats['metrics']['cursor']['open']['pinned'])
+      report_metric('Cursors/Timed Out', 'timedout', stats['metrics']['cursor']['timedOut'])
 
-      # DBStats metrics
-      report_metric("DBStats/dataSize/Data Size",  "bytes",         db_stats['dataSize'])
-      report_metric("DBStats/dataSize/Index Size", "bytes",         db_stats['indexSize'])
-      report_metric("DBStats/Objects",             "Objects",       db_stats['objects'])
-      report_metric("DBStats/Collections",         "Collections",   db_stats['collections'])
-      report_metric("DBStats/Average Object Size", "Size",          db_stats['avgObjSize'])
+      # Memory metrics retrieved in MB from MongoDB, converted to bytes for New Relic graphing
+      ## Main
+      report_metric('Memory/Main/Resident', 'bytes', stats['mem']['resident'] * 1024 * 1024)
+      report_metric('Memory/Main/Virtual', 'bytes', stats['mem']['virtual'] * 1024 * 1024)
+      report_metric('Memory/Main/Mapped', 'bytes', stats['mem']['mapped'] * 1024 * 1024)
+      report_metric('Memory/Main/Mapped with Journal', 'bytes', stats['mem']['mappedWithJournal'] * 1024 * 1024)
 
-      # Memory metrics retrived in MB from MongoDB, converted to bytes for New Relic graphing
-      report_metric("Memory/Resident",             "bytes",            stats['mem']['resident'] * 1024 * 1024)
-      report_metric("Memory/Virtual",              "bytes",            stats['mem']['virtual'] * 1024 * 1024)
-      report_metric("Memory/Mapped",               "bytes",            stats['mem']['mapped'] * 1024 * 1024)
-      report_metric("Memory/Mapped with Journal",  "bytes",            stats['mem']['mappedWithJournal'] * 1024 * 1024)
+      ## tcmalloc
+      report_section('Memory/Tcmalloc', stats['tcmalloc']['generic'])
+      report_section('Memory/Tcmalloc', stats['tcmalloc']['tcmalloc'])
 
       # Locks
-      report_lock_counter_metric("Locks/Global/Lock",              "%",         stats, "globalLock|lockTime")
-      report_lock_counter_metric("Locks/DB/Read Locked",           "%",         stats, "locks|#{database}|timeLockedMicros|r")
-      report_lock_counter_metric("Locks/DB/Write Locked",          "%",         stats, "locks|#{database}|timeLockedMicros|w")
-      report_lock_counter_metric("Locks/DB/Acquiring Read Lock",   "%",         stats, "locks|#{database}|timeAcquiringMicros|r")
-      report_lock_counter_metric("Locks/DB/Acquiring Write Lock",  "%",         stats, "locks|#{database}|timeAcquiringMicros|w")
+      ## Global
+      report_lock_metric('Locks/Global/Count/Acquiring Shared (S) Lock', 'count', stats, 'locks|Global|acquireCount|R')
+      report_lock_metric('Locks/Global/Count/Acquiring Intent Shared (IS) Lock', 'count', stats, 'locks|Global|acquireCount|r')
+      report_lock_metric('Locks/Global/Count/Acquiring Exclusive (X) Lock', 'count', stats, 'locks|Global|acquireCount|W')
+      report_lock_metric('Locks/Global/Count/Acquiring Intent Exclusive (IX) Lock', 'count', stats, 'locks|Global|acquireCount|w')
 
-      # Queues
-      report_metric("Queue/Current Readers",       "reads",         stats['globalLock']['currentQueue']['readers'])
-      report_metric("Queue/Current Writers",       "writes",        stats['globalLock']['currentQueue']['writers'])
+      report_lock_metric('Locks/Global/Wait Count/Acquiring Shared (S) Lock', 'count', stats, 'locks|Global|acquireWaitCount|R')
+      report_lock_metric('Locks/Global/Wait Count/Acquiring Intent Shared (IS) Lock', 'count', stats, 'locks|Global|acquireWaitCount|r')
+      report_lock_metric('Locks/Global/Wait Count/Acquiring Exclusive (X) Lock', 'count', stats, 'locks|Global|acquireWaitCount|W')
+      report_lock_metric('Locks/Global/Wait Count/Acquiring Intent Exclusive (IX) Lock', 'count', stats, 'locks|Global|acquireWaitCount|w')
+
+      report_lock_metric('Locks/Global/Time/Acquiring Shared (S) Lock', 'microseconds', stats, 'locks|Global|timeAcquiringMicros|R')
+      report_lock_metric('Locks/Global/Time/Acquiring Intent Shared (IS) Lock', 'microseconds', stats, 'locks|Global|timeAcquiringMicros|r')
+      report_lock_metric('Locks/Global/Time/Acquiring Exclusive (X) Lock', 'microseconds', stats, 'locks|Global|timeAcquiringMicros|W')
+      report_lock_metric('Locks/Global/Time/Acquiring Intent Exclusive (IX) Lock', 'microseconds', stats, 'locks|Global|timeAcquiringMicros|w')
+
+      ## Database
+      report_lock_metric('Locks/Database/Count/Acquiring Shared (S) Lock', 'count', stats, 'locks|Database|acquireCount|R')
+      report_lock_metric('Locks/Database/Count/Acquiring Intent Shared (IS) Lock', 'count', stats, 'locks|Database|acquireCount|r')
+      report_lock_metric('Locks/Database/Count/Acquiring Exclusive (X) Lock', 'count', stats, 'locks|Database|acquireCount|W')
+      report_lock_metric('Locks/Database/Count/Acquiring Intent Exclusive (IX) Lock', 'count', stats, 'locks|Database|acquireCount|w')
+
+      report_lock_metric('Locks/Database/Wait Count/Acquiring Shared (S) Lock', 'count', stats, 'locks|Database|acquireWaitCount|R')
+      report_lock_metric('Locks/Database/Wait Count/Acquiring Intent Shared (IS) Lock', 'count', stats, 'locks|Database|acquireWaitCount|r')
+      report_lock_metric('Locks/Database/Wait Count/Acquiring Exclusive (X) Lock', 'count', stats, 'locks|Database|acquireWaitCount|W')
+      report_lock_metric('Locks/Database/Wait Count/Acquiring Intent Exclusive (IX) Lock', 'count', stats, 'locks|Database|acquireWaitCount|w')
+
+      report_lock_metric('Locks/Database/Time/Acquiring Shared (S) Lock', 'microseconds', stats, 'locks|Database|timeAcquiringMicros|R')
+      report_lock_metric('Locks/Database/Time/Acquiring Intent Shared (IS) Lock', 'microseconds', stats, 'locks|Database|timeAcquiringMicros|r')
+      report_lock_metric('Locks/Database/Time/Acquiring Exclusive (X) Lock', 'microseconds', stats, 'locks|Database|timeAcquiringMicros|W')
+      report_lock_metric('Locks/Database/Time/Acquiring Intent Exclusive (IX) Lock', 'microseconds', stats, 'locks|Database|timeAcquiringMicros|w')
+
+      ## Collection
+      report_lock_metric('Locks/Collection/Count/Acquiring Shared (S) Lock', 'count', stats, 'locks|Collection|acquireCount|R')
+      report_lock_metric('Locks/Collection/Count/Acquiring Intent Shared (IS) Lock', 'count', stats, 'locks|Collection|acquireCount|r')
+      report_lock_metric('Locks/Collection/Count/Acquiring Exclusive (X) Lock', 'count', stats, 'locks|Collection|acquireCount|W')
+      report_lock_metric('Locks/Collection/Count/Acquiring Intent Exclusive (IX) Lock', 'count', stats, 'locks|Collection|acquireCount|w')
+
+      ## Metadata
+      report_lock_metric('Locks/Metadata/Count/Acquiring Shared (S) Lock', 'count', stats, 'locks|Metadata|acquireCount|R')
+      report_lock_metric('Locks/Metadata/Count/Acquiring Intent Shared (IS) Lock', 'count', stats, 'locks|Metadata|acquireCount|r')
+      report_lock_metric('Locks/Metadata/Count/Acquiring Exclusive (X) Lock', 'count', stats, 'locks|Metadata|acquireCount|W')
+      report_lock_metric('Locks/Metadata/Count/Acquiring Intent Exclusive (IX) Lock', 'count', stats, 'locks|Metadata|acquireCount|w')
+
+      ## Oplog
+      report_lock_metric('Locks/Oplog/Count/Acquiring Shared (S) Lock', 'count', stats, 'locks|oplog|acquireCount|R')
+      report_lock_metric('Locks/Oplog/Count/Acquiring Intent Shared (IS) Lock', 'count', stats, 'locks|oplog|acquireCount|r')
+      report_lock_metric('Locks/Oplog/Count/Acquiring Exclusive (X) Lock', 'count', stats, 'locks|oplog|acquireCount|W')
+      report_lock_metric('Locks/Oplog/Count/Acquiring Intent Exclusive (IX) Lock', 'count', stats, 'locks|oplog|acquireCount|w')
+
+      # Global Lock
+      report_lock_metric('Global Lock/Lock Total Time', 'microseconds', stats, 'globalLock|totalTime')
+
+      report_section('Global Lock/Current Queue', stats['globalLock']['currentQueue'])
+      report_section('Global Lock/Active Clients', stats['globalLock']['activeClients'])
 
       @prior = stats
+
+      # DBStats metrics
+      report_db_stats()
+
+      # WiredTiger engine metrics
+      if stats.key?('wiredTiger')
+        report_wiredtiger_stats(stats['wiredTiger'])
+      end
+
     rescue => e
       $stderr.puts "#{e}: #{e.backtrace.join("\n   ")}"
     end
 
     def client
       @client ||= begin
-                    client = MongoClient.new(endpoint, port.to_i, :slave_ok => true, :ssl => ssl || false)
+        client = MongoClient.new(endpoint, port.to_i, :slave_ok => true, :ssl => ssl || false)
 
-                    unless username.nil?
-                      client.db("admin").authenticate(username, password)
-                      client.db(database)
-                    else
-                      client.db(database)
-                    end
-                  end
+        unless username.nil?
+          client.db('admin').authenticate(username, password)
+        end
+        client
+      end
     rescue Mongo::AuthenticationError
-      $stderr.puts "Error authententicating to MongoDB database.  Requires a user on the admin database"
+      $stderr.puts 'Error authententicating to MongoDB database. Requires a user on the admin database'
       exit 1
     rescue Mongo::ConnectionFailure
       $stderr.puts "Error connecting to host port provided: #{endpoint}:#{port}"
@@ -102,38 +148,70 @@ module NewRelic::MongodbAgent
     end
 
     def mongodb_server_stats
-      client.command('serverStatus' => 1)
+      client.db('local').command('serverStatus' => 1)
     end
 
-    def mongodb_db_stats
-      if !@client_stats.nil? && @client_stats_retrieved_at < Time.now - (60 * 60) # only retrieve size stats once / hour
-        @client_stats
-      else
-        @client_stats_retrieved_at = Time.now
-        @client_stats = client.stats
+    def report_db_stats
+      for db_name in @client.database_names
+        db_stats = @client.db(db_name).stats
+
+        report_metric("DBStats/Collections/#{db_name}", 'Collections', db_stats['collections'])
+        report_metric("DBStats/Objects/#{db_name}", 'Objects', db_stats['objects'])
+        report_metric("DBStats/Indexes/#{db_name}", 'Indexes', db_stats['indexes'])
+
+        report_metric("DBStats/Average Object Size/#{db_name}", 'Size', db_stats['avgObjSize'])
+        report_metric("DBStats/Data Size/#{db_name}", 'bytes', db_stats['dataSize'])
+        report_metric("DBStats/Storage Size/#{db_name}", 'bytes', db_stats['storageSize'])
+        report_metric("DBStats/Index Size/#{db_name}", 'bytes', db_stats['indexSize'])
       end
     end
 
-    def report_counter_metric(metric, type, value)
+    def report_wiredtiger_stats(wt_stats)
+      %w(LSM async block-manager cache connection cursor data-handle log reconciliation session thread-yield transaction).each do |key|
+        section_name = key.split('-').collect(&:capitalize).join(' ').squeeze(' ').strip
+        report_section("Wired Tiger/#{section_name}", wt_stats[key])
+      end
+
+      report_section("Wired Tiger/Concurrent Transactions/Read", wt_stats['concurrentTransactions']['read'])
+      report_section("Wired Tiger/Concurrent Transactions/Write", wt_stats['concurrentTransactions']['write'])
+    end
+
+    def report_section(metric_name_prefix, section_stats, units = 'count')
+      section_stats.each do |key, value|
+        key_name = key.sub('-', '_').split('_').collect(&:capitalize).join(' ').squeeze(' ').strip
+        if key.include?('bytes')
+          units = 'bytes'
+        end
+        report_metric(metric_name_prefix + "/#{key_name}", units, value)
+      end
+    end
+
+    def report_counter_metric(metric_name, units, value)
       @counter_metrics ||= {}
 
-      if @counter_metrics[metric].nil?
-        @counter_metrics[metric] = NewRelic::Processor::EpochCounter.new
+      if @counter_metrics[metric_name].nil?
+        @counter_metrics[metric_name] = NewRelic::Processor::EpochCounter.new
       end
 
-      report_metric(metric, type, @counter_metrics[metric].process(value))
+      report_metric(metric_name, units, @counter_metrics[metric_name].process(value))
     end
 
-    def report_lock_counter_metric(metric, type, stats, path)
-      current_value = path.split(/\|/).inject(stats) { |v,p| v[p] }
+    def report_lock_metric(metric_name, units, stats, path)
+      current_value = path.split(/\|/).inject(stats) { |v, p| v[p] }
+      if current_value.nil?
+        current_value = 0
+      end
 
       if @prior
-        prior_value   = path.split(/\|/).inject(@prior) { |v,p| v[p] }
-        uptimeMillis  = (stats["uptimeMillis"] - @prior["uptimeMillis"]) * 1.0
+        prior_value = path.split(/\|/).inject(@prior) { |v, p| v[p] }
+        if prior_value.nil?
+          prior_value = 0
+        end
 
-        lockRatio = (current_value - prior_value) / uptimeMillis / (uptimeMillis / 1000)
+        uptime_millis = (stats['uptimeMillis'] - @prior['uptimeMillis']) * 1.0
+        lock_ratio = (current_value - prior_value) / uptime_millis / (uptime_millis / 1000)
 
-        report_metric(metric, type, lockRatio)
+        report_metric(metric_name, units, lock_ratio)
       end
     end
 
