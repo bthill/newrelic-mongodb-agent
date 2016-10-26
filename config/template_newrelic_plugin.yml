@@ -16,7 +16,7 @@ newrelic:
   #
   # Update with your New Relic account license key:
   #
-  license_key: 'YOUR_LICENSE_KEY_HERE'
+  license_key: <%= ENV['NEW_RELIC_LICENSE_KEY'] %>
   #
   # Set to '1' for verbose output, remove for normal output.
   # All output goes to stdout/stderr.
@@ -28,7 +28,7 @@ newrelic:
 agents:
   mongodb:
     # for best outcome, us a full mongodb path for your "name"
-    agent_name: "localhost:27017/mongodb"
+    agent_name: <%= ENV['MONGO_AGENT_NAME'] %>
     # if value is not set 'localhost' will be used
     #endpoint: "localhost"
     # if value is not set '27017' will be used
@@ -45,5 +45,5 @@ agents:
     #  > use admin
     #  > db.addUser("myadminuser", "myadminpassword")
     #
-    username: "root"
-    password: ""
+    username: <%= ENV['MONGO_USER'] %>
+    password: <%= ENV['MONGO_PASSWORD'] %>
